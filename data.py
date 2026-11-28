@@ -61,7 +61,7 @@ def fetch_one(api_key, kind, lawd_cd, ym):
             "numOfRows": 1000,
             "pageNo": page,
         }
-        res = requests.get(f"{BASE_URL}/{APIS[kind]}", params=params, timeout=30)
+        res = requests.get(f"{BASE_URL}/{APIS[kind]}", params=params, timeout=15)
         res.raise_for_status()
         try:
             root = ET.fromstring(res.content)
