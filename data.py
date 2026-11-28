@@ -63,12 +63,18 @@ def fetch_one(api_key, kind, lawd_cd, ym):
         }
         res = requests.get(f"{BASE_URL}/{APIS[kind]}", params=params, timeout=30)
         res.raise_for_status()
-        root = ET.fromstring(res.content)
+        try:
+            root = ET.fromstring(res.content)
+        except ET.ParseError:
+            # XML이 아닌 응답(예: 'Unauthorized' 같은 일반 문자)이 온 경우
+            raise RuntimeError(f"API 응답 형식 오류: {res.text[:60]}")
 
         # 결과 코드 확인 (정상: 000 또는 00)
         code = root.findtext(".//resultCode")
         if code not in ("000", "00"):
-            raise RuntimeError(f"API 오류 {code}: {root.findtext('.//resultMsg')}")
+            # 키 오류 등은 형식이 다른 오류 응답(returnAuthMsg)으로 오기도 해서 둘 다 확인
+            msg = root.findtext(".//resultMsg") or root.findtext(".//returnAuthMsg")
+            raise RuntimeError(f"API 오류 {code or root.findtext('.//returnReasonCode')}: {msg}")
 
         # <item> 하나가 거래 1건. 안의 항목을 그대로 dict로 만든다
         for item in root.iter("item"):
@@ -142,11 +148,21 @@ def load_data(api_key):
         df = clean(fetch_all(api_key))
         return df, "API"
     except Exception as e:  # 네트워크 장애, 키 오류 등
-        # 오류 내용에는 API 키가 들어간 주소가 포함될 수 있어서 화면에는 보여주지 않고 서버 로그에만 남긴다
-        print("API 호출 실패:", type(e).__name__)
+        reason = safe_reason(e)
+        print("API 호출 실패:", reason)
         if os.path.exists(BACKUP_PATH):
-            return pd.read_csv(BACKUP_PATH, dtype={"계약년월": str}), "백업 자료"
+            return pd.read_csv(BACKUP_PATH, dtype={"계약년월": str}), f"백업 자료, API 실패 원인: {reason}"
         raise
+
+
+def safe_reason(e):
+    """실패 원인을 화면에 보여줄 수 있는 형태로 줄인다.
+    requests 오류 메시지에는 API 키가 들어간 주소가 포함되므로 메시지 전체는 절대 쓰지 않는다."""
+    if isinstance(e, requests.exceptions.HTTPError) and e.response is not None:
+        return f"HTTP {e.response.status_code}"
+    if isinstance(e, RuntimeError):      # 직접 만든 오류 (키가 들어있지 않음)
+        return str(e)
+    return type(e).__name__              # 예: ConnectTimeout, ConnectionError
 
 
 def monthly_rent_small(df, max_area=33, max_deposit=5000):
